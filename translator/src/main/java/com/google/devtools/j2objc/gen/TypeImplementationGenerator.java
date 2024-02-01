@@ -176,8 +176,7 @@ public class TypeImplementationGenerator extends TypeGenerator {
       VariableElement varElement = fragment.getVariableElement();
       Expression initializer = fragment.getInitializer();
       String name = nameTable.getVariableQualifiedName(varElement);
-      String objcType = getDeclarationType(varElement);
-      objcType += objcType.endsWith("*") ? "" : " ";
+      String objcType = paddedType(getDeclarationType(varElement), varElement);
       if (initializer != null) {
         String cast = !varElement.asType().getKind().isPrimitive()
             && ElementUtil.isVolatile(varElement) ? "(void *)" : "";
@@ -299,6 +298,8 @@ public class TypeImplementationGenerator extends TypeGenerator {
       println("J2OBJC_IGNORE_DESIGNATED_BEGIN");
     }
     syncLineNumbers(m);  // avoid doc-comment
+    // Implementations should not contain generics as this allows us to avoid type errors
+    // when translating to ObjC's more limited system of generics.
     print(getMethodSignature(m, false) + " ");
     print(reindent(generateStatement(m.getBody())) + "\n");
     if (isDesignatedInitializer) {

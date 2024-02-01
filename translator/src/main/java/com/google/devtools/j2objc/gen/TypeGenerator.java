@@ -21,6 +21,7 @@ import com.google.devtools.j2objc.Options;
 import com.google.devtools.j2objc.ast.AbstractTypeDeclaration;
 import com.google.devtools.j2objc.ast.BodyDeclaration;
 import com.google.devtools.j2objc.ast.CompilationUnit;
+import com.google.devtools.j2objc.ast.EnumDeclaration;
 import com.google.devtools.j2objc.ast.Expression;
 import com.google.devtools.j2objc.ast.FieldDeclaration;
 import com.google.devtools.j2objc.ast.FunctionDeclaration;
@@ -36,7 +37,6 @@ import com.google.devtools.j2objc.util.NameTable;
 import com.google.devtools.j2objc.util.TranslationEnvironment;
 import com.google.devtools.j2objc.util.TypeUtil;
 import com.google.devtools.j2objc.util.UnicodeUtils;
-import com.google.j2objc.annotations.GenerateObjectiveCGenerics;
 import com.google.j2objc.annotations.ObjectiveCName;
 import java.lang.reflect.Modifier;
 import java.util.Iterator;
@@ -67,6 +67,7 @@ public abstract class TypeGenerator extends AbstractSourceGenerator {
   protected final String typeName;
   protected final Options options;
   protected final boolean parametersNonnullByDefault;
+  protected final boolean nullMarked;
 
   private final List<BodyDeclaration> declarations;
 
@@ -84,6 +85,14 @@ public abstract class TypeGenerator extends AbstractSourceGenerator {
     options = env.options();
     parametersNonnullByDefault = options.nullability()
         && env.elementUtil().areParametersNonnullByDefault(node.getTypeElement(), options);
+
+    boolean isElementNullMarked = env.elementUtil().isNullMarked(node.getTypeElement(), options);
+    // Note: Enums are implicitly marked as nonnull when the `nullMarked` experimental
+    //       feature is enabled. This is true even if the `@NullMarked` annotation is
+    //       not present on the package or type.
+    boolean nullMarkedEnabled = options.nullMarked();
+    boolean isEnumDeclaration = (typeNode instanceof EnumDeclaration);
+    nullMarked = isElementNullMarked || (nullMarkedEnabled && isEnumDeclaration);
   }
 
   protected boolean shouldPrintDeclaration(BodyDeclaration decl) {
@@ -156,6 +165,11 @@ public abstract class TypeGenerator extends AbstractSourceGenerator {
           && !Modifier.isAbstract(((MethodDeclaration) decl).getModifiers());
     }
   };
+
+  protected boolean generateObjectiveCGenerics(TypeMirror t) {
+    return (options.asObjCGenericDecl() || TypeUtil.hasGenerateObjectiveCGenerics(t))
+        && !TypeUtil.isInterface(t);
+  }
 
   protected abstract void printFunctionDeclaration(FunctionDeclaration decl);
   protected abstract void printMethodDeclaration(MethodDeclaration decl);
@@ -279,21 +293,22 @@ public abstract class TypeGenerator extends AbstractSourceGenerator {
     }
   }
 
-  protected boolean hasGenerateObjectiveCGenerics(TypeMirror type) {
-    return TypeUtil.asTypeElement(type) != null
-        && ElementUtil.hasAnnotation(
-            TypeUtil.asTypeElement(type), GenerateObjectiveCGenerics.class);
+  protected String getReturnType(MethodDeclaration m, boolean generatorAllowsGenerics) {
+    ExecutableElement element = m.getExecutableElement();
+    return nameTable.getObjCTypeDeclaration(
+        element.getReturnType(),
+        generatorAllowsGenerics
+            && (generateObjectiveCGenerics(element.getReturnType())
+                || generateObjectiveCGenerics(typeElement.asType())),
+        typeElement);
   }
 
   /** Create an Objective-C method signature string. */
-  protected String getMethodSignature(MethodDeclaration m, boolean asObjCGenericDecl) {
+  protected String getMethodSignature(MethodDeclaration m, boolean generatorAllowsGenerics) {
     StringBuilder sb = new StringBuilder();
     ExecutableElement element = m.getExecutableElement();
     char prefix = Modifier.isStatic(m.getModifiers()) ? '+' : '-';
-    String returnType =
-        nameTable.getObjCTypeDeclaration(
-            element.getReturnType(),
-            hasGenerateObjectiveCGenerics(element.getReturnType()) || asObjCGenericDecl);
+    String returnType = getReturnType(m, generatorAllowsGenerics);
     String selector = nameTable.getMethodSelector(element);
 
     // Verify the same number of parameters are defined by the method and the annotation.
@@ -336,7 +351,11 @@ public abstract class TypeGenerator extends AbstractSourceGenerator {
         VariableElement var = params.get(i).getVariableElement();
         String typeName =
             nameTable.getObjCTypeDeclaration(
-                var.asType(), hasGenerateObjectiveCGenerics(var.asType()) || asObjCGenericDecl);
+                var.asType(),
+                generatorAllowsGenerics
+                    && (generateObjectiveCGenerics(var.asType())
+                        || generateObjectiveCGenerics(typeElement.asType())),
+                typeElement);
         sb.append(
             UnicodeUtils.format(
                 "%s:(%s%s)%s",
@@ -352,8 +371,9 @@ public abstract class TypeGenerator extends AbstractSourceGenerator {
 
   protected String getFunctionSignature(FunctionDeclaration function, boolean isPrototype) {
     StringBuilder sb = new StringBuilder();
-    String returnType = nameTable.getObjCType(function.getReturnType().getTypeMirror());
-    returnType += returnType.endsWith("*") ? "" : " ";
+    TypeMirror returnTypeMirror = function.getReturnType().getTypeMirror();
+    String returnType =
+        paddedType(nameTable.getObjCType(returnTypeMirror), function.getExecutableElement());
     sb.append(returnType).append(function.getName()).append('(');
     if (isPrototype && function.getParameters().isEmpty()) {
       sb.append("void");
@@ -361,8 +381,7 @@ public abstract class TypeGenerator extends AbstractSourceGenerator {
       for (Iterator<SingleVariableDeclaration> iter = function.getParameters().iterator();
            iter.hasNext(); ) {
         VariableElement var = iter.next().getVariableElement();
-        String paramType = nameTable.getObjCType(var.asType());
-        paramType += (paramType.endsWith("*") ? "" : " ");
+        String paramType = paddedType(nameTable.getObjCType(var.asType()), var);
         sb.append(paramType + nameTable.getVariableShortName(var));
         if (iter.hasNext()) {
           sb.append(", ");
@@ -371,6 +390,42 @@ public abstract class TypeGenerator extends AbstractSourceGenerator {
     }
     sb.append(')');
     return sb.toString();
+  }
+
+  /**
+   * Returns a String representation of a type with trailing padding and nullable annotations, if
+   * applicable.
+   *
+   * <p><b>Note:</b> If {@code type} is not a pointer, a new String is returned with a trailing
+   * space. If {@code type} represents a pointer, {@code element} represents a nullable type, and
+   * NullMarked is enabled, an Objective-C nullability specifier is appended with a trailing space.
+   * Otherwise, trailing padding is not added to the returned String.
+   *
+   * @param type the string representation of the data type.
+   * @param element represents a program element such as a package, class, or method.
+   */
+  protected String paddedType(String type, Element element) {
+    String suffix = " ";
+    if (type.endsWith("*")) {
+      suffix = shouldAddNullableAnnotation(element) ? "_Nullable " : "";
+    }
+    return type + suffix;
+  }
+
+  // TODO: b/287612419 - Update call-sites to pass through a String representation of
+  //                     the related type to ensure false is returned in those cases.
+  /**
+   * Returns a boolean indicating if {@code element} should have a nullable annotation applied to it
+   * if it is a pointer type.
+   *
+   * <p><b>Warning:</b> The method should only be called when {@code element} is known to be a
+   * pointer type.
+   *
+   * @param element represents a program element such as a package, class, or method.
+   */
+  protected boolean shouldAddNullableAnnotation(Element element) {
+    boolean hasNullableAnnotation = element != null && ElementUtil.hasNullableAnnotation(element);
+    return hasNullableAnnotation && nullMarked;
   }
 
   protected String generateExpression(Expression expr) {

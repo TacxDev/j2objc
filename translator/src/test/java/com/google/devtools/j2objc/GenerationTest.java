@@ -16,6 +16,7 @@
 
 package com.google.devtools.j2objc;
 
+import static com.google.common.truth.Truth.assertThat;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.base.Joiner;
@@ -74,13 +75,14 @@ import javax.tools.ToolProvider;
 import junit.framework.TestCase;
 
 /**
- * Tests code generation. A string containing the source code for a list of Java
- * statements is parsed and translated, then iOS code is generated for one or
- * more of those statements for comparison in a specific generation test.
+ * Test support and assertions for j2objc code generation. The general design involves transpiling a
+ * string containing source code from one or more Java source file snippets, then verifying that the
+ * iOS code is generated as expected. Options (flags) may be set before transpilation. When a test
+ * fails, the full generated .m or .h file is included in the failure message.
  *
  * @author Tom Ball
  */
-public class GenerationTest extends TestCase {
+public abstract class GenerationTest extends TestCase {
 
   protected File tempDir;
   protected Parser parser;
@@ -524,7 +526,7 @@ public class GenerationTest extends TestCase {
                 || name.equals(NameTable.DEALLOC_METHOD)) {
               return false;
             }
-            assert result[0] == null;
+            assertThat(result[0]).isNull();
             result[0] = node;
             return false;
           }
@@ -847,7 +849,4 @@ public class GenerationTest extends TestCase {
             .trim();
     return new String(Base64.getDecoder().decode(encodedMetadata), UTF_8);
   }
-
-  // Empty test so Bazel won't report a "no tests" error.
-  public void testNothing() {}
 }

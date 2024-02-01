@@ -69,6 +69,7 @@ JAVA_TIME_TEST_ROOT = $(OJLUNI_TEST_BASE)/java/time
 ICU_ROOT = $(ANDROID_PLATFORM)/external/icu/android_icu4j/src/main/java
 ICU_LIBCORE_BRIDGE = $(ANDROID_PLATFORM)/external/icu/android_icu4j/libcore_bridge/src/java
 ICU_TEST_ROOT = $(ANDROID_PLATFORM)/external/icu/android_icu4j/src/main/tests
+ICU_PROPERTIES_ROOT = $(ANDROID_PLATFORM)/external/icu/android_icu4j/resources
 ICU_RES_DIR = $(BUILD_DIR)/icu_res
 ICU_EMBEDDED_RES_DIR = $(ICU_RES_DIR)/embedded
 ANDROID_PLATFORM_COMPAT_ROOT = $(ANDROID_BASE)/tools/platform-compat/java
@@ -145,7 +146,8 @@ NATIVE_SOURCE_DIRS = $(EMULATION_CLASS_DIR) $(APPLE_ROOT) $(ANDROID_NATIVE_DIR) 
 
 # Clang warnings
 WARNINGS := $(CC_WARNINGS) $(WARNINGS) -Wno-unused-label -Wno-dangling-else \
-  -Wimplicit-function-declaration -Wint-conversion -Wshorten-64-to-32 -Wcomma -Wnonnull
+  -Wimplicit-function-declaration -Wint-conversion -Wshorten-64-to-32 -Wcomma \
+  -Wnonnull -Wno-bitwise-instead-of-logical
 
 ifeq ("$(strip $(XCODE_VERSION_MAJOR))", "0500")
 OBJCFLAGS += -DSET_MIN_IOS_VERSION

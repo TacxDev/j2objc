@@ -14,8 +14,6 @@
 
 package com.google.devtools.j2objc.gen;
 
-import static java.util.stream.Collectors.joining;
-
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
@@ -57,6 +55,22 @@ import javax.lang.model.type.TypeMirror;
  * @author Tom Ball, Keith Stanger
  */
 public class TypeDeclarationGenerator extends TypeGenerator {
+
+  /** Represents Objective-C's audited nullability regions. */
+  protected enum AuditedRegion {
+    BEGIN("NS_ASSUME_NONNULL_BEGIN"),
+    END("NS_ASSUME_NONNULL_END");
+
+    private final String macro;
+
+    private AuditedRegion(String macro) {
+      this.macro = macro;
+    }
+
+    public String getMacro() {
+      return macro;
+    }
+  }
 
   private static final String DEPRECATED_ATTRIBUTE = "__attribute__((deprecated))";
 
@@ -114,9 +128,7 @@ public class TypeDeclarationGenerator extends TypeGenerator {
     printNativeEnum();
 
     printTypeDocumentation();
-    if (options.defaultNonnull()) {
-      println("NS_ASSUME_NONNULL_BEGIN");
-    }
+    printNonnullAuditedRegion(AuditedRegion.BEGIN);
     if (typeElement.getKind().isInterface()) {
       printf("@protocol %s", typeName);
     } else {
@@ -134,12 +146,10 @@ public class TypeDeclarationGenerator extends TypeGenerator {
     }
     printInnerDeclarations();
     println("\n@end");
-    if (options.defaultNonnull()) {
-      println("NS_ASSUME_NONNULL_END");
-    }
 
     if (ElementUtil.isPackageInfo(typeElement)) {
       printOuterDeclarations();
+      printNonnullAuditedRegion(AuditedRegion.END);
       return;
     }
     printCompanionClassDeclaration();
@@ -152,6 +162,9 @@ public class TypeDeclarationGenerator extends TypeGenerator {
     printBoxedOperators();
 
     printUnprefixedAlias();
+
+    newline();
+    printNonnullAuditedRegion(AuditedRegion.END);
   }
 
   private void printNativeEnum() {
@@ -174,8 +187,14 @@ public class TypeDeclarationGenerator extends TypeGenerator {
       int ordinal = 0;
       for (EnumConstantDeclaration constant : constants) {
         printIndent();
-        printf("%s_%s = %d,\n",
-            nativeName, nameTable.getVariableBaseName(constant.getVariableElement()), ordinal++);
+        String caseName = nameTable.getVariableBaseName(constant.getVariableElement());
+        if (options.swiftEnums()) {
+          printf(
+              "%s_%s NS_SWIFT_NAME(%s) = %d,\n",
+              nativeName, caseName, NameTable.getSwiftEnumName(caseName), ordinal++);
+        } else {
+          printf("%s_%s = %d,\n", nativeName, caseName, ordinal++);
+        }
       }
       unindent();
       print("};\n");
@@ -226,20 +245,19 @@ public class TypeDeclarationGenerator extends TypeGenerator {
     return names;
   }
 
-  private void printInterfaceType() {
-    printf("@interface %s", typeName);
-    if (needsGenerateObjectiveCGenerics() && !typeElement.getTypeParameters().isEmpty()) {
-      printf(
-          "<%s>",
-          typeElement.getTypeParameters().stream()
-              .map(Element::getSimpleName)
-              .collect(joining(", ")));
+  protected void printInterfaceGenerics() {
+    if (generateObjectiveCGenerics(typeElement.asType())) {
+      List<String> genericNames = nameTable.getClassObjCGenericTypeNames(typeElement.asType());
+      if (!genericNames.isEmpty()) {
+        printf("<%s>", String.join(", ", genericNames));
+      }
     }
-    printf(" : %s", getSuperTypeName());
   }
 
-  private boolean needsGenerateObjectiveCGenerics() {
-    return options.asObjCGenericDecl() || hasGenerateObjectiveCGenerics(typeElement.asType());
+  private void printInterfaceType() {
+    printf("@interface %s", typeName);
+    printInterfaceGenerics();
+    printf(" : %s", getSuperTypeName());
   }
 
   private void printImplementedProtocols() {
@@ -275,7 +293,7 @@ public class TypeDeclarationGenerator extends TypeGenerator {
         VariableElement var = fragment.getVariableElement();
         TypeMirror type = var.asType();
         String accessorName = nameTable.getStaticAccessorName(var);
-        String objcType = nameTable.getObjCTypeDeclaration(type);
+        String objcType = paddedType(nameTable.getObjCTypeDeclaration(type), var).trim();
         TypeElement declaringClass = ElementUtil.getDeclaringClass(var);
         String baseName = nameTable.getVariableBaseName(var);
         ExecutableElement getter =
@@ -292,11 +310,16 @@ public class TypeDeclarationGenerator extends TypeGenerator {
       if (typeNode instanceof EnumDeclaration) {
         for (EnumConstantDeclaration constant : ((EnumDeclaration) typeNode).getEnumConstants()) {
           String accessorName = nameTable.getStaticAccessorName(constant.getVariableElement());
-          if (options.nullability()) {
-            printf("\n+ (%s * __nonnull)%s;\n", typeName, accessorName);
-          } else {
-            printf("\n+ (%s *)%s;\n", typeName, accessorName);
+          String nullabilitySpecifier = "";
+          TypeElement element = typeNode.getTypeElement();
+          if (shouldAddNullableAnnotation(element)) {
+            nullabilitySpecifier = " _Nullable";
+          } else if (options.nullability() && !nullMarked) {
+            // Only add a nonnull annotation if null marked is not enabled as it is implied
+            // when annotated regions are in use. This code block preserves legacy behavior.
+            nullabilitySpecifier = " _Nonnull";
           }
+          printf("\n+ (%s *%s)%s;\n", typeName, nullabilitySpecifier, accessorName);
         }
       }
     }
@@ -347,6 +370,9 @@ public class TypeDeclarationGenerator extends TypeGenerator {
       }
       if (needsAsterisk) {
         print('*');
+        if (shouldAddNullableAnnotation(varElement)) {
+          print("_Nullable ");
+        }
       }
       print(nameTable.getVariableShortName(varElement));
     }
@@ -369,8 +395,13 @@ public class TypeDeclarationGenerator extends TypeGenerator {
         if (options.nullability()) {
           print(", nonnull");
         }
-        // TODO(antoniocortes): use nameTable.getSwiftName() when it is implemented.
-        printf(") %s *%s NS_SWIFT_NAME(%s);", typeName, accessorName, accessorName);
+        String swiftName = accessorName;
+        if (options.swiftEnums()) {
+          swiftName = NameTable.getSwiftEnumName(accessorName);
+        }
+        printf(
+            ") %s *%s NS_SWIFT_NAME(%s);",
+            typeName, accessorName, swiftName);
       }
     }
   }
@@ -404,7 +435,14 @@ public class TypeDeclarationGenerator extends TypeGenerator {
     if (typeNode instanceof EnumDeclaration) {
       newline();
       println("/*! INTERNAL ONLY - Use enum accessors declared below. */");
-      printf("FOUNDATION_EXPORT %s *%s_values_[];\n", typeName, typeName);
+
+      // If the generated source is annotated with nonnull nullability regions,
+      // ensure this type is explicitly marked as nonnull. Failing to do so leads
+      // to the following error: `inferring '_Nonnull' for pointer type within array
+      // is deprecated [-Werror,-Wnullability-inferred-on-nested-type]`.
+      String arrayTypeNamePrefix = nullMarked ? "_Nonnull " : "";
+      String arrayTypeName = arrayTypeNamePrefix + typeName;
+      printf("FOUNDATION_EXPORT %s *%s_values_[];\n", typeName, arrayTypeName);
       for (EnumConstantDeclaration constant : ((EnumDeclaration) typeNode).getEnumConstants()) {
         String varName = nameTable.getVariableBaseName(constant.getVariableElement());
         newline();
@@ -442,10 +480,13 @@ public class TypeDeclarationGenerator extends TypeGenerator {
       if (typeStr.contains(",")) {
         typeStr = "J2OBJC_ARG(" + typeStr + ')';
       }
+      String objcTypePadded = paddedType(typeStr, var).trim();
       String fieldName = nameTable.getVariableShortName(var);
       String isVolatile = ElementUtil.isVolatile(var) ? "_VOLATILE" : "";
-      println(UnicodeUtils.format("J2OBJC%s_FIELD_SETTER(%s, %s, %s)",
-          isVolatile, typeName, fieldName, typeStr));
+      println(
+          UnicodeUtils.format(
+              "J2OBJC%s_FIELD_SETTER(%s, %s, %s)",
+              isVolatile, typeName, fieldName, objcTypePadded));
     }
   }
 
@@ -470,9 +511,8 @@ public class TypeDeclarationGenerator extends TypeGenerator {
     VariableElement var = fragment.getVariableElement();
     boolean isVolatile = ElementUtil.isVolatile(var);
     String objcType = nameTable.getObjCTypeDeclaration(var.asType());
-    String objcTypePadded = objcType + (objcType.endsWith("*") ? "" : " ");
-    String declType = getDeclarationType(var);
-    declType += (declType.endsWith("*") ? "" : " ");
+    String objcTypePadded = paddedType(objcType, var);
+    String declType = paddedType(getDeclarationType(var), var);
     String name = nameTable.getVariableShortName(var);
     boolean isFinal = ElementUtil.isFinal(var);
     boolean isPrimitive = var.asType().getKind().isPrimitive();
@@ -498,7 +538,8 @@ public class TypeDeclarationGenerator extends TypeGenerator {
       printStaticFieldDeclaration(
           fragment, UnicodeUtils.format("%s%s_%s", declType, typeName, name));
     }
-    printf("J2OBJC_STATIC_FIELD%s(%s, %s, %s)\n", qualifiers, typeName, name, objcType);
+    printf(
+        "J2OBJC_STATIC_FIELD%s(%s, %s, %s)\n", qualifiers, typeName, name, objcTypePadded.trim());
   }
 
   // Overridden in TypePrivateDeclarationGenerator
@@ -506,8 +547,7 @@ public class TypeDeclarationGenerator extends TypeGenerator {
     VariableElement var = fragment.getVariableElement();
     Object value = var.getConstantValue();
     assert value != null;
-    String declType = getDeclarationType(var);
-    declType += (declType.endsWith("*") ? "" : " ");
+    String declType = paddedType(getDeclarationType(var), var);
     String name = nameTable.getVariableShortName(var);
     if (ElementUtil.isPrimitiveConstant(var)) {
       printf("#define %s_%s %s\n", typeName, name, LiteralGenerator.generate(value));
@@ -583,6 +623,57 @@ public class TypeDeclarationGenerator extends TypeGenerator {
     }
   }
 
+  private boolean canPrintPseudoProperty(MethodDeclaration m) {
+    if (!m.isPseudoProperty()) {
+      return false;
+    }
+
+    ExecutableElement methodElement = m.getExecutableElement();
+    String methodName = nameTable.getMethodSelector(methodElement);
+    String propertyName = NameTable.lowercaseFirst(methodName.replaceFirst("get", ""));
+
+    TypeElement declaringClass = ElementUtil.getDeclaringClass(methodElement);
+    if (NameTable.isReservedName(propertyName)) {
+      return false;
+    }
+    // Check if there is a exisitng property with the same name
+    if (ElementUtil.findField(declaringClass, propertyName) != null) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private void printPseudoProperty(MethodDeclaration m) {
+    ExecutableElement methodElement = m.getExecutableElement();
+    String methodName = nameTable.getMethodSelector(methodElement);
+    String propertyName = NameTable.lowercaseFirst(methodName.replaceFirst("get", ""));
+
+    TypeElement declaringClass = ElementUtil.getDeclaringClass(methodElement);
+    if (NameTable.isReservedName(propertyName)) {
+      return;
+    }
+    // Check if there is a exisitng property with the same name
+    if (ElementUtil.findField(declaringClass, propertyName) != null) {
+      return;
+    }
+
+    TypeMirror returnType = m.getReturnTypeMirror();
+    ExecutableElement setter =
+        ElementUtil.findSetterMethod(propertyName, returnType, declaringClass, false);
+
+    newline();
+    printf(
+        "@property (%snonatomic, %s, %s%s) %s %s;",
+        ElementUtil.isStatic(methodElement) ? "class, " : "",
+        "getter=" + methodName,
+        setter != null ? "setter=" + nameTable.getMethodSelector(setter) : "readonly",
+        shouldAddNullableAnnotation(methodElement) ? ", nullable" : "",
+        getReturnType(m, true), // Generics allowed in headers.
+        propertyName);
+    newline();
+  }
+
   /**
    * Emit method declaration.
    *
@@ -605,7 +696,13 @@ public class TypeDeclarationGenerator extends TypeGenerator {
     newline();
     JavadocGenerator.printDocComment(getBuilder(), m.getJavadoc());
 
-    String methodSignature = getMethodSignature(m, needsGenerateObjectiveCGenerics());
+    if (canPrintPseudoProperty(m)) {
+      printPseudoProperty(m);
+      return;
+    }
+
+    // Method declarations allow generics.
+    String methodSignature = getMethodSignature(m, true);
 
     // In order to properly map the method name from the entire signature, we must isolate it from
     // associated type and parameter declarations.  The method name is guaranteed to be between the
@@ -681,6 +778,12 @@ public class TypeDeclarationGenerator extends TypeGenerator {
       print(" NS_RETURNS_RETAINED");
     }
     println(";");
+  }
+
+  protected void printNonnullAuditedRegion(AuditedRegion state) {
+    if (nullMarked) {
+      println(state.getMacro());
+    }
   }
 
   /**
@@ -763,10 +866,10 @@ public class TypeDeclarationGenerator extends TypeGenerator {
   protected String nullability(Element element) {
     if (options.nullability()) {
       if (ElementUtil.hasNullableAnnotation(element)) {
-        return " __nullable";
+        return " _Nullable";
       }
       if (ElementUtil.isNonnull(element, parametersNonnullByDefault)) {
-        return " __nonnull";
+        return " _Nonnull";
       }
     }
     return "";

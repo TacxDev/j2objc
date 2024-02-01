@@ -90,7 +90,8 @@ public class Options {
   private String processors = null;
   private boolean disallowInheritedConstructors = true;
   private boolean nullability = false;
-  private boolean defaultNonnull = false;
+  private boolean swiftEnums = false;
+  private boolean nullMarked = false;
   private TimingLevel timingLevel = TimingLevel.NONE;
   private boolean dumpAST = false;
   private String lintArgument = "-Xlint:none"; // Disable all lint warnings by default.
@@ -108,6 +109,7 @@ public class Options {
   private boolean ignoreJarWarnings = false;
   private boolean linkSourcePathHeaders = false;
   private boolean javacWarnings = true;
+  private boolean stripReflectionErrors = false;
 
   private Mappings mappings = new Mappings();
   private FileUtil fileUtil = new FileUtil();
@@ -469,6 +471,23 @@ public class Options {
         stripGwtIncompatible = true;
       } else if (arg.equals("--strip-reflection")) {
         includedMetadata = EnumSet.of(MetadataSupport.ENUM_CONSTANTS);
+      } else if (arg.equals("-Xstrip-reflection-errors:")) {
+        String subArg = arg.substring(arg.indexOf(':') + 1);
+        switch (subArg) {
+          case "true":
+            {
+              setStripReflectionErrors(true);
+              break;
+            }
+          case "false":
+            {
+              break;
+            }
+          default:
+            {
+              usage("invalid -Xstrip-reflection-warnings argument: " + subArg);
+            }
+        }
       } else if (arg.equals("-Xstrip-enum-constants")) {
         includedMetadata.remove(MetadataSupport.ENUM_CONSTANTS);
       } else if (arg.startsWith("-Xjavac-warnings:")) {
@@ -542,6 +561,10 @@ public class Options {
         setClassProperties(false);
       } else if (arg.equals("--swift-friendly")) {
         setSwiftFriendly(true);
+      } else if (arg.equals("--swift-enums")) {
+        setSwiftEnums(true);
+      } else if (arg.equals("--no-swift-enums")) {
+        setSwiftEnums(false);
       } else if (arg.equals("-processor")) {
         processors = getArgValue(args, arg);
       } else if (arg.equals("--allow-inherited-constructors")) {
@@ -550,8 +573,8 @@ public class Options {
         nullability = true;
       } else if (arg.equals("--no-nullability")) {
         nullability = false;
-      } else if (arg.equals("-Xdefault-nonnull")) {
-        defaultNonnull = true;
+      } else if (arg.equals("-Xnull-marked")) {
+        nullMarked = true;
       } else if (arg.startsWith("-Xlint")) {
         lintArgument = arg;
       } else if (arg.equals("-Xtranslate-bootclasspath")) {
@@ -1115,6 +1138,7 @@ public class Options {
   public void setSwiftFriendly(boolean b) {
     setClassProperties(b);
     setNullability(b);
+    setSwiftEnums(b);
   }
 
   public boolean nullability() {
@@ -1126,14 +1150,22 @@ public class Options {
     nullability = b;
   }
 
-  public boolean defaultNonnull() {
-    return nullability && defaultNonnull;
+  public boolean swiftEnums() {
+    return swiftEnums;
   }
 
   @VisibleForTesting
-  public void setDefaultNonnull(boolean b) {
-    nullability = true;
-    defaultNonnull = b;
+  public void setSwiftEnums(boolean b) {
+    swiftEnums = b;
+  }
+
+  public boolean nullMarked() {
+    return nullability && nullMarked;
+  }
+
+  @VisibleForTesting
+  public void setNullMarked(boolean b) {
+    nullMarked = b;
   }
 
   public String lintArgument() {
@@ -1238,5 +1270,14 @@ public class Options {
 
   public boolean javacWarnings() {
     return javacWarnings;
+  }
+
+  @VisibleForTesting
+  public void setStripReflectionErrors(boolean b) {
+    stripReflectionErrors = b;
+  }
+
+  public boolean stripReflectionErrors() {
+    return stripReflectionErrors;
   }
 }

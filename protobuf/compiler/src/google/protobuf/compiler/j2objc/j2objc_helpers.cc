@@ -58,6 +58,7 @@ const int kPackagePrefixFieldNumber = 102687446;
 
 // NOLINTBEGIN(runtime/string) - Existing code design requires globals.
 static std::string globalPrefix;
+static std::string globalPostfix;
 static std::string globalFileSubExtension(".j2objc.pb");
 static std::map<std::string, std::string> prefixes;
 static std::map<std::string, std::string> wildcardPrefixes;
@@ -97,10 +98,10 @@ const std::string &FieldName(const FieldDescriptor *field) {
 }
 
 std::string StripProto(const std::string &filename) {
-  if (HasSuffixString(filename, ".protodevel")) {
-    return StripSuffixString(filename, ".protodevel");
+  if (absl::EndsWith(filename, ".protodevel")) {
+    return std::string(absl::StripSuffix(filename, ".protodevel"));
   } else {
-    return StripSuffixString(filename, ".proto");
+    return std::string(absl::StripSuffix(filename, ".proto"));
   }
 }
 
@@ -309,19 +310,19 @@ std::string FileJavaPackage(const FileDescriptor *file) {
 }
 
 std::string JavaPackageToDir(std::string package_name) {
-  std::string package_dir = StringReplace(package_name, ".", "/", true);
+  std::string package_dir = absl::StrReplaceAll(package_name, {{".", "/"}});
   if (!package_dir.empty()) package_dir += "/";
   return package_dir;
 }
 
 std::string ClassName(const Descriptor *descriptor) {
-  return GetClassPrefix(descriptor->file(), descriptor->containing_type())
-      + descriptor->name();
+  return GetClassPrefix(descriptor->file(), descriptor->containing_type()) +
+         descriptor->name() + globalPostfix;
 }
 
 std::string ClassName(const EnumDescriptor *descriptor) {
-  return GetClassPrefix(descriptor->file(), descriptor->containing_type())
-      + descriptor->name();
+  return GetClassPrefix(descriptor->file(), descriptor->containing_type()) +
+         descriptor->name() + globalPostfix;
 }
 
 std::string COrdinalEnumName(const EnumDescriptor *descriptor) {
@@ -341,7 +342,8 @@ std::string CValuePreprocessorName(const EnumDescriptor *descriptor) {
 }
 
 std::string ClassName(const FileDescriptor *descriptor) {
-  return GetPackagePrefix(descriptor) + FileClassName(descriptor);
+  return GetPackagePrefix(descriptor) + FileClassName(descriptor) +
+         globalPostfix;
 }
 
 std::string EnumOrdinalName(const EnumValueDescriptor *descriptor) {
@@ -490,7 +492,7 @@ static std::string HandleExtremeFloatingPoint(std::string val,
 
 // Escape C++ trigraphs by escaping question marks to \?
 static std::string EscapeTrigraphs(const std::string &to_escape) {
-  return StringReplace(to_escape, "?", "\\?", true);
+  return absl::StrReplaceAll(to_escape, {{"?", "\\?"}});
 }
 
 JavaType GetJavaType(const FieldDescriptor* field) {
@@ -583,9 +585,9 @@ std::string DefaultValue(const FieldDescriptor *field) {
         uint32_t length = ghtonl(default_string.length());
         std::string bytes((const char *)&length, sizeof(length));
         bytes.append(default_string);
-        return "\"" + CEscape(bytes) + "\"";
+        return "\"" + absl::CEscape(bytes) + "\"";
       } else {
-        return "@\"" + EscapeTrigraphs(CEscape(default_string)) + "\"";
+        return "@\"" + EscapeTrigraphs(absl::CEscape(default_string)) + "\"";
       }
     }
     case FieldDescriptor::CPPTYPE_ENUM:
@@ -649,7 +651,7 @@ std::string GetFieldOptionsData(const FieldDescriptor *descriptor) {
   if (length > 0) {
     std::string bytes((const char *)&length, sizeof(length));
     bytes.append(field_options);
-    return "\"" + CEscape(bytes) + "\"";
+    return "\"" + absl::CEscape(bytes) + "\"";
   }
   return "NULL";
 }
@@ -671,6 +673,10 @@ void ParsePrefixLine(std::string line) {
 
 void SetGlobalPrefix(std::string prefix) {
   globalPrefix = std::move(prefix);
+}
+
+void SetGlobalPostfix(std::string postfix) {
+  globalPostfix = std::move(postfix);
 }
 
 void SetFileSubExtension(std::string fileSubExtension) {

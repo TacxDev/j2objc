@@ -590,6 +590,7 @@ JAVA_PRIVATE_SOURCES_CORE = \
   dalvik/system/CloseGuard.java \
   dalvik/system/VersionCodes.java \
   dalvik/system/VMStack.java \
+  dalvik/system/ZipPathValidator.java \
   java/io/Bits.java \
   java/io/DefaultFileSystem.java \
   java/io/DeleteOnExitHook.java \
@@ -599,6 +600,7 @@ JAVA_PRIVATE_SOURCES_CORE = \
   java/io/SerialCallbackContext.java \
   java/io/UnixFileSystem.java \
   java/lang/JavaLangAccess.java \
+  java/lang/StringUTF16.java \
   java/lang/reflect/WeakCache.java \
   java/math/BitSieve.java \
   java/math/MutableBigInteger.java \
@@ -631,6 +633,8 @@ JAVA_PRIVATE_SOURCES_CORE = \
   java/util/DualPivotQuicksort.java \
   java/util/Grego.java \
   java/util/JumboEnumSet.java \
+  java/util/KeyValueHolder.java \
+  java/util/ImmutableCollections.java \
   java/util/RegularEnumSet.java \
   java/util/logging/Logging.java \
   java/util/logging/LoggingProxyImpl.java \
@@ -659,6 +663,7 @@ JAVA_PRIVATE_SOURCES_CORE = \
   java/util/stream/StreamSpliterators.java \
   java/util/stream/TerminalOp.java \
   jdk/internal/module/SystemModulesMap.java \
+  jdk/internal/util/Preconditions.java \
   libcore/api/CorePlatformApi.java \
   libcore/api/Hide.java \
   libcore/api/IntraCoreApi.java \
@@ -1183,6 +1188,7 @@ JAVA_PRIVATE_SOURCES_FILE = \
   java/nio/file/FileTreeIterator.java \
   java/nio/file/FileTreeWalker.java \
   sun/misc/JavaIOFileDescriptorAccess.java \
+  sun/misc/JavaObjectInputStreamAccess.java \
   sun/misc/SharedSecrets.java \
   sun/nio/fs/AbstractBasicFileAttributeView.java \
   sun/nio/fs/AbstractFileSystemProvider.java \
@@ -1429,6 +1435,7 @@ JAVA_PUBLIC_SOURCES_SECURITY = \
   javax/crypto/spec/RC2ParameterSpec.java \
   javax/crypto/spec/RC5ParameterSpec.java \
   javax/crypto/spec/SecretKeySpec.java \
+  javax/security/auth/AuthPermission.java \
   javax/security/auth/DestroyFailedException.java \
   javax/security/auth/Destroyable.java \
   javax/security/auth/PrivateCredentialPermission.java \
